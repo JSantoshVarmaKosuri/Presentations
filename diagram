@@ -1,0 +1,97 @@
+flowchart TB
+    ctx["ReviewContext Input JSON\n(PR data, diffs, static results,\nrules_config, history_summary, convo)"] --> coord["PR_Review_Coordinator\n(Entry Agent)"]
+    coord --> ghMcp["GitHub MCP Server\n(extra files, tests, docs)"] & rulesMcp["Rules MCP Server\n(full rule definitions)"] & histMcp["History MCP Server\n(past PR decisions)"] & staticAgent["StaticSignals_And_Dependency_Agent\n(aggregates Sonar, Snyk, deps)"] & cqPerfAgent["CodeQuality_And_Performance_Agent\n(style, logic, readability, perf)"] & policyAgent["Policy_And_BestPractices_Agent\n(AEM/platform/org/custom rules)"] & sumConvAgent["Summary_And_Conversation_Agent\n(PR summaries & chat replies)"] & tone["Tone_Adapter_Function\n(uses history_summary + histCtx)"] & agg["Aggregator_And_Formatter\n(merge, categorize, attach trace IDs & patches)"]
+    ghMcp --> ghCtx["Enriched GitHub Context"]
+    rulesMcp --> rulesCtx["Expanded Rules & Guidelines"]
+    histMcp --> histCtx["Fine-grained History Signals"]
+    ghCtx --> staticAgent & cqPerfAgent & policyAgent & sumConvAgent
+    rulesCtx --> policyAgent
+    histCtx --> coord & sumConvAgent
+    staticAgent --> policyAgent & coord
+    tone --> cqPerfAgent & sumConvAgent
+    cqPerfAgent --> coord
+    policyAgent --> coord
+    sumConvAgent --> coord
+    agg --> resp["ReviewResponse Output JSON\n(pr_summary, feedback_items,\nconversation_reply, metrics)"]
+
+-------------
+
+
+flowchart TB
+    %% --- Row 1: Developer actions ---
+    subgraph devLane["Developer Actions"]
+        dPush["Push to Branch"]
+        dPROpen["Open or Update PR"]
+        dComment["Comment with /ai-* command"]
+    end
+
+    %% --- Row 2: GitHub Events ---
+    subgraph ghLane["GitHub Events and Workflows"]
+        evPush["(push event)"]
+        evPR["(pull_request event)"]
+        evPRManual["(workflow_dispatch from PR UI)"]
+        evComment["(issue_comment event)"]
+
+        ghaCI["Workflow: ci-code-quality.yml"]
+        ghaPR["Workflow: ai-pr-review.yml"]
+        ghaComment["Workflow: ai-pr-comment.yml"]
+    end
+
+    %% --- Row 3: Orchestrator services ---
+    subgraph orchLane["Orchestrators in Repo"]
+        prOrch["run_ai_pr_review.py<br/>PR Orchestrator"]
+        commentOrch["run_ai_comment_session.py<br/>Comment Orchestrator"]
+    end
+
+    %% --- Row 4: External systems ---
+    subgraph sysLane["External Systems and AI"]
+        sonar["SonarQube"]
+        snyk["Snyk"]
+        rulesSvc["Rules and Policy Service"]
+        reviewDB["(Review History DB)"]
+        ghAPI["GitHub REST API"]
+        aiGateway["AI Gateway Client"]
+        aiPlatform["In-House AI Platform<br/>PR Review Coordinator + Agents + MCP"]
+    end
+
+    %% --- Developer -> GitHub events ---
+    dPush --> evPush
+    dPROpen --> evPR
+    dPROpen --> evPRManual
+    dComment --> evComment
+
+    %% --- Push event CI workflow ---
+    evPush --> ghaCI
+    ghaCI --> sonar
+    ghaCI --> snyk
+
+    %% --- PR AI review workflow (auto + manual from UI) ---
+    evPR --> ghaPR
+    evPRManual --> ghaPR
+    ghaPR --> prOrch
+
+    prOrch --> ghAPI
+    prOrch --> sonar
+    prOrch --> snyk
+    prOrch --> rulesSvc
+    prOrch --> reviewDB
+
+    prOrch --> aiGateway
+    aiGateway --> aiPlatform
+    aiPlatform --> aiGateway
+    aiGateway --> prOrch
+
+    prOrch --> ghAPI
+    prOrch --> reviewDB
+
+    %% --- Comment-based conversational workflow ---
+    evComment --> ghaComment
+    ghaComment --> commentOrch
+
+    commentOrch --> ghAPI
+    commentOrch --> reviewDB
+    commentOrch --> aiGateway
+    aiGateway --> aiPlatform
+    aiPlatform --> aiGateway
+    aiGateway --> commentOrch
+    commentOrch --> ghAPI
